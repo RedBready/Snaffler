@@ -105,6 +105,11 @@ namespace SnaffCore.Classifiers
                             }
                             return;
                         case MatchLoc.FileMD5:
+                            if (fileInfo.Length > MyOptions.MaxSizeToGrep)
+                            {
+                                Mq.Trace("Skipping MD5 for oversized file: " + fileInfo.FullName);
+                                return;
+                            }
                             bool Md5Result = MD5Match(fileInfo);
                             if (Md5Result)
                             {

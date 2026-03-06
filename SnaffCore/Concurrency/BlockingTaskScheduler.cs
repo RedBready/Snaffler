@@ -9,8 +9,8 @@ namespace SnaffCore.Concurrency
 {
     public class BlockingStaticTaskScheduler
     {
-        // singleton cruft
-        private static readonly object syncLock = new object();
+        // lock object shared with LimitedConcurrencyLevelTaskScheduler for pulse/wait
+        internal static readonly object syncLock = new object();
 
         //public TaskCounters TaskCounters { get; set; }
 
@@ -49,6 +49,9 @@ namespace SnaffCore.Concurrency
 
             while (proceed == false) // loop the calling thread until we are allowed to do the thing
             {
+                if (_cancellationSource.IsCancellationRequested)
+                    return;
+
                 lock (syncLock) // take out the lock
                 {
                     // check to see how many tasks we have waiting and keep looping if it's too many
@@ -57,7 +60,11 @@ namespace SnaffCore.Concurrency
                     if (_maxBacklog != 0)
                     {
                         if (Scheduler.GetTaskCounters().CurrentTasksQueued >= _maxBacklog)
+                        {
+                            // Wait instead of spinning - releases lock and sleeps until pulsed or 500ms
+                            Monitor.Wait(syncLock, 500);
                             continue;
+                        }
                     }
 
                     // okay, let's add the thing
@@ -72,6 +79,11 @@ namespace SnaffCore.Concurrency
                     }, _cancellationSource.Token);
                 }
             }
+        }
+
+        public void Cancel()
+        {
+            _cancellationSource.Cancel();
         }
     }
 
@@ -178,6 +190,12 @@ namespace SnaffCore.Concurrency
 
                         // Execute the task we pulled out of the queue
                         TryExecuteTask(item);
+
+                        // Wake any threads waiting in New() due to backpressure
+                        lock (BlockingStaticTaskScheduler.syncLock)
+                        {
+                            Monitor.PulseAll(BlockingStaticTaskScheduler.syncLock);
+                        }
                     }
                 }
                 // We're done processing items on the current thread

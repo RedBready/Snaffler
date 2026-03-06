@@ -25,12 +25,22 @@ namespace SnaffCore.TreeWalk
             FileScanner = SnaffCon.GetFileScanner();
         }
 
+        private int SmbTimeoutMs { get { return MyOptions.SmbTimeoutSeconds * 1000; } }
+
         public void WalkTree(string currentDir)
         {
             // Walks a tree checking files and generating results as it goes.
-             
-            if (!Directory.Exists(currentDir))
+
+            try
             {
+                if (!TimeoutHelper.RunWithTimeout(() => Directory.Exists(currentDir), SmbTimeoutMs))
+                {
+                    return;
+                }
+            }
+            catch (TimeoutException)
+            {
+                Mq.Trace("Timed out checking if directory exists: " + currentDir);
                 return;
             }
 
@@ -43,9 +53,17 @@ namespace SnaffCore.TreeWalk
                 {
                     Mq.Info("SCCM content library found: " + currentDir);
                     string dataLibDir = Path.Combine(currentDir, "DataLib"); // As full path
-                    if (!Directory.Exists(dataLibDir))
+                    try
                     {
-                        Mq.Error("SCCM content library found but no DataLib found: " + dataLibDir);
+                        if (!TimeoutHelper.RunWithTimeout(() => Directory.Exists(dataLibDir), SmbTimeoutMs))
+                        {
+                            Mq.Error("SCCM content library found but no DataLib found: " + dataLibDir);
+                            return;
+                        }
+                    }
+                    catch (TimeoutException)
+                    {
+                        Mq.Trace("Timed out checking SCCM DataLib: " + dataLibDir);
                         return;
                     }
                     Mq.Info("SCCM content library: Entering into datalib: " + dataLibDir);
@@ -63,7 +81,7 @@ namespace SnaffCore.TreeWalk
             // Existing code:
             try
             {
-                string[] files = Directory.GetFiles(currentDir);
+                string[] files = TimeoutHelper.RunWithTimeout(() => Directory.GetFiles(currentDir), SmbTimeoutMs);
                 // check if we actually like the files
                 foreach (string file in files)
                 {
@@ -80,6 +98,10 @@ namespace SnaffCore.TreeWalk
                         }
                     });
                 }
+            }
+            catch (TimeoutException)
+            {
+                Mq.Trace("Timed out listing files in: " + currentDir);
             }
             catch (UnauthorizedAccessException)
             {
@@ -104,7 +126,7 @@ namespace SnaffCore.TreeWalk
 
             try
             {
-                string[] subDirs = Directory.GetDirectories(currentDir);
+                string[] subDirs = TimeoutHelper.RunWithTimeout(() => Directory.GetDirectories(currentDir), SmbTimeoutMs);
                 // Create a new treewalker task for each subdir.
                 if (subDirs.Length >= 1)
                 {
@@ -153,6 +175,10 @@ namespace SnaffCore.TreeWalk
                     }
                 }
             }
+            catch (TimeoutException)
+            {
+                Mq.Trace("Timed out listing subdirectories in: " + currentDir);
+            }
             catch (UnauthorizedAccessException)
             {
                 //Mq.Trace(e.ToString());
@@ -177,14 +203,22 @@ namespace SnaffCore.TreeWalk
         public void WalkSccmTree(string currentDir, string sccmBaseDir)
         {
             // Walks a tree checking files and generating results as it goes.
-            if (!Directory.Exists(currentDir))
+            try
             {
+                if (!TimeoutHelper.RunWithTimeout(() => Directory.Exists(currentDir), SmbTimeoutMs))
+                {
+                    return;
+                }
+            }
+            catch (TimeoutException)
+            {
+                Mq.Trace("Timed out checking if SCCM directory exists: " + currentDir);
                 return;
             }
 
             try
             {
-                string[] files = Directory.GetFiles(currentDir);
+                string[] files = TimeoutHelper.RunWithTimeout(() => Directory.GetFiles(currentDir), SmbTimeoutMs);
                 // check if we actually like the files
                 foreach (string file in files)
                 {
@@ -304,6 +338,10 @@ namespace SnaffCore.TreeWalk
                 //Mq.Trace(e.ToString());
                 //continue;
             }
+            catch (TimeoutException)
+            {
+                Mq.Trace("Timed out listing files in SCCM dir: " + currentDir);
+            }
             catch (Exception e)
             {
                 Mq.Degub(e.ToString());
@@ -312,7 +350,7 @@ namespace SnaffCore.TreeWalk
 
             try
             {
-                string[] subDirs = Directory.GetDirectories(currentDir);
+                string[] subDirs = TimeoutHelper.RunWithTimeout(() => Directory.GetDirectories(currentDir), SmbTimeoutMs);
                 // Create a new treewalker task for each subdir.
                 if (subDirs.Length >= 1)
                 {
@@ -363,6 +401,10 @@ namespace SnaffCore.TreeWalk
 
                     }
                 }
+            }
+            catch (TimeoutException)
+            {
+                Mq.Trace("Timed out listing subdirectories in SCCM dir: " + currentDir);
             }
             catch (UnauthorizedAccessException)
             {

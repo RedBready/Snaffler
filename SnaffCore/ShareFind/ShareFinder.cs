@@ -28,10 +28,21 @@ namespace SnaffCore.ShareFind
             TreeWalker = SnaffCon.GetTreeWalker();
         }
 
+        private int SmbTimeoutMs { get { return MyOptions.SmbTimeoutSeconds * 1000; } }
+
         internal void GetComputerShares(string computer)
         {
             // find the shares
-            HostShareInfo[] hostShareInfos = GetHostShareInfo(computer);
+            HostShareInfo[] hostShareInfos;
+            try
+            {
+                hostShareInfos = TimeoutHelper.RunWithTimeout(() => GetHostShareInfo(computer), SmbTimeoutMs);
+            }
+            catch (TimeoutException)
+            {
+                Mq.Trace("Timed out enumerating shares on: " + computer);
+                return;
+            }
 
             foreach (HostShareInfo hostShareInfo in hostShareInfos)
             {
@@ -217,8 +228,13 @@ namespace SnaffCore.ShareFind
             BlockingMq Mq = BlockingMq.GetMq();
             try
             {
-                string[] files = Directory.GetFiles(share);
+                string[] files = TimeoutHelper.RunWithTimeout(() => Directory.GetFiles(share), SmbTimeoutMs);
                 return true;
+            }
+            catch (TimeoutException)
+            {
+                Mq.Trace("Timed out checking readability of share: " + share);
+                return false;
             }
             catch (UnauthorizedAccessException)
             {

@@ -32,6 +32,10 @@ namespace SnaffCore.Classifiers
                         };
                     }
                 }
+                catch (RegexMatchTimeoutException)
+                {
+                    Mq.Trace("Regex timed out on pattern: " + regex.ToString());
+                }
                 catch (Exception e)
                 {
                     Mq.Error(e.ToString());
@@ -100,6 +104,10 @@ namespace SnaffCore.Classifiers
                 if (contextBytes > 0) matchContext = original.Substring(contextStart, contextBytes * 2);
 
                 return Regex.Escape(matchContext);
+            }
+            catch (RegexMatchTimeoutException)
+            {
+                Mq.Trace("Regex timed out getting context for pattern: " + matchRegex.ToString());
             }
             catch (Exception e)
             {

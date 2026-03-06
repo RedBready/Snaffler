@@ -159,7 +159,7 @@ namespace SnaffCore.Classifiers
                 case MatchAction.CheckForKeys:
                     // do a special x509 dance
                     List<string> x509MatchReason = x509Match(fileInfo, altFileInfo);
-                    if (x509MatchReason.Count >= 0)
+                    if (x509MatchReason.Count > 0)
                     {
                         // if there were any matchreasons, cat them together...
                         string matchContext = String.Join(",", x509MatchReason);
@@ -248,50 +248,39 @@ namespace SnaffCore.Classifiers
             return false;
         }
 
-        public X509Certificate2 parseCert(string certPath, string password = null)
+        public X509Certificate2 parseCert(string localFilePath, string password = null, string originalExtension = null)
         {
             BlockingMq Mq = BlockingMq.GetMq();
-            // IT TURNS OUT THAT new X509Certificate2() actually writes a file to a temp path and if you
-            // don't manage it yourself it hits 65,000 temp files and hangs.
+            // File should already be copied to a local temp path by the caller.
+            // This avoids repeated remote file copies when trying multiple passwords.
 
-            var tempfile = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
-            File.Copy(certPath, tempfile);
             X509Certificate2 parsedCert = null;
+            string ext = originalExtension ?? Path.GetExtension(localFilePath);
 
-            try
+            if (ext == ".pem")
             {
-                if (Path.GetExtension(certPath) == ".pem")
-                {
-                    string pemstring = File.ReadAllText(tempfile);
-                    byte[] certBuffer = Helpers.GetBytesFromPEM(pemstring, PemStringType.Certificate);
-                    byte[] keyBuffer = Helpers.GetBytesFromPEM(pemstring, PemStringType.RsaPrivateKey);
+                string pemstring = File.ReadAllText(localFilePath);
+                byte[] certBuffer = Helpers.GetBytesFromPEM(pemstring, PemStringType.Certificate);
+                byte[] keyBuffer = Helpers.GetBytesFromPEM(pemstring, PemStringType.RsaPrivateKey);
 
-                    if (certBuffer != null)
+                if (certBuffer != null)
+                {
+                    parsedCert = new X509Certificate2(certBuffer);
+                    if (keyBuffer != null)
                     {
-                        parsedCert = new X509Certificate2(certBuffer);
-                        if (keyBuffer != null)
-                        {
-                            RSACryptoServiceProvider prov = Crypto.DecodeRsaPrivateKey(keyBuffer);
-                            parsedCert.PrivateKey = prov;
-                        }
-                    }
-                    else
-                    {
-                        Mq.Error("Failure parsing " + certPath);
+                        RSACryptoServiceProvider prov = Crypto.DecodeRsaPrivateKey(keyBuffer);
+                        parsedCert.PrivateKey = prov;
                     }
                 }
                 else
                 {
-                    parsedCert = new X509Certificate2(tempfile, password);
+                    Mq.Error("Failure parsing " + localFilePath);
                 }
             }
-            catch (Exception e)
+            else
             {
-                File.Delete(tempfile);
-                throw e;
+                parsedCert = new X509Certificate2(localFilePath, password);
             }
-
-            File.Delete(tempfile);
 
             return parsedCert;
         }
@@ -326,13 +315,23 @@ namespace SnaffCore.Classifiers
             X509Certificate2 parsedCert = null;
             bool nopwrequired = false;
 
-            // TODO - handle if there is no private key, strip out unnecessary stuff from Certificate.cs, make work with pfx style stuff below
+            // Copy the remote file to temp ONCE, then try all password attempts against the local copy
+            var localTempCopy = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+            try
+            {
+                File.Copy(fileInfo.FullName, localTempCopy);
+            }
+            catch (Exception e)
+            {
+                Mq.Trace("Failed to copy cert file to temp: " + fileInfo.FullName + " " + e.Message);
+                return matchReasons;
+            }
 
             try
             {
                 // try to parse it, it'll throw if it needs a password
-                parsedCert = parseCert(certPath);
-                
+                parsedCert = parseCert(localTempCopy, null, extension);
+
                 // if it parses we know we didn't need a password
                 nopwrequired = true;
             }
@@ -342,15 +341,15 @@ namespace SnaffCore.Classifiers
                 Mq.Trace(e.ToString());
 
                 // build the list of passwords to try including the filename
-                List<string> passwords = MyOptions.CertPasswords;
+                List<string> passwords = new List<string>(MyOptions.CertPasswords);
                 passwords.Add(Path.GetFileNameWithoutExtension(fileName));
 
                 // try each of our very obvious passwords
-                foreach (string password in MyOptions.CertPasswords)
+                foreach (string password in passwords)
                 {
                     try
                     {
-                        parsedCert = parseCert(certPath, password);
+                        parsedCert = parseCert(localTempCopy, password, extension);
                         if (password == "")
                         {
                             matchReasons.Add("PasswordBlank");
@@ -359,13 +358,14 @@ namespace SnaffCore.Classifiers
                         {
                             matchReasons.Add("PasswordCracked: " + password);
                         }
+                        break; // Found a working password, stop trying
                     }
                     catch (CryptographicException ee)
                     {
                         Mq.Trace("Password " + password + " invalid for cert file " + fullFileName + " " + ee.ToString());
                     }
                 }
-                if (matchReasons.Count == 0) 
+                if (matchReasons.Count == 0)
                 {
                     matchReasons.Add("HasPassword");
                     matchReasons.Add("LookNearbyFor.txtFiles");
@@ -374,6 +374,10 @@ namespace SnaffCore.Classifiers
             catch (Exception e)
             {
                 Mq.Error("Unhandled exception parsing cert: " + fullFileName + " " + e.ToString());
+            }
+            finally
+            {
+                try { File.Delete(localTempCopy); } catch { }
             }
 
             if (parsedCert != null)

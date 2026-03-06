@@ -23,19 +23,6 @@ WordList = ["\\\\.purple\\\\accounts.xml",
 Triage = "Red"
 
 [[ClassifierRules]]
-EnumerationScope = "ContentsEnumeration"
-RuleName = "KeepConfigRegexRed"
-MatchAction = "Snaffle"
-Description = "A description of what a rule does."
-MatchLocation = "FileContentAsString"
-WordListType = "Regex"
-MatchLength = 0
-WordList = ["NVRAM config last updated", 
-"enable password \\.", 
-"simple-bind authenticated encrypt"]
-Triage = "Red"
-
-[[ClassifierRules]]
 EnumerationScope = "FileEnumeration"
 RuleName = "KeepExtExactYellow"
 MatchAction = "Snaffle"

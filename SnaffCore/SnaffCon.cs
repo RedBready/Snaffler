@@ -36,11 +36,13 @@ namespace SnaffCore
         private AdData _adData = AdData.AdDataInstance;
 
         private DateTime StartTime { get; set; }
+        private CancellationToken _cancellationToken;
 
-        public SnaffCon(Options options)
+        public SnaffCon(Options options, CancellationToken cancellationToken = default(CancellationToken))
         {
             MyOptions = options;
             Mq = BlockingMq.GetMq();
+            _cancellationToken = cancellationToken;
 
             int shareThreads = MyOptions.ShareThreads;
             int treeThreads = MyOptions.TreeThreads;
@@ -91,6 +93,14 @@ namespace SnaffCore
             statusUpdateTimer.Elapsed += TimedStatusUpdate;
             statusUpdateTimer.Start();
 
+            // Faster completion check - every 15 seconds instead of waiting for the full status interval
+            Timer completionCheckTimer = new Timer(15000) { AutoReset = true };
+            completionCheckTimer.Elapsed += (s, ev) =>
+            {
+                if (FileTaskScheduler.Done() && ShareTaskScheduler.Done() && TreeTaskScheduler.Done())
+                    waitHandle.Set();
+            };
+            completionCheckTimer.Start();
 
             // If we want to hunt for user IDs, we need data from the running user's domain.
             // Future - walk trusts
@@ -149,7 +159,18 @@ namespace SnaffCore
                 Mq.Error("OctoParrot says: AWK! I SHOULDN'T BE!");
             }
 
-            waitHandle.WaitOne();
+            // Wait for completion or cancellation
+            while (!waitHandle.WaitOne(TimeSpan.FromSeconds(5)))
+            {
+                if (_cancellationToken.IsCancellationRequested)
+                {
+                    Mq.Info("Cancellation requested, aborting scan...");
+                    ShareTaskScheduler.Cancel();
+                    TreeTaskScheduler.Cancel();
+                    FileTaskScheduler.Cancel();
+                    break;
+                }
+            }
 
             StatusUpdate();
             DateTime finished = DateTime.Now;
@@ -251,38 +272,45 @@ namespace SnaffCore
 
         public void PrepDomainUserRules()
         {
-            try
+            if (MyOptions.DomainUsersWordlistRules.Count < 1)
+                return;
+
+            foreach (string ruleName in MyOptions.DomainUsersWordlistRules)
             {
-                if (MyOptions.DomainUsersWordlistRules.Count >= 1)
+                ClassifierRule configClassifierRule =
+                    MyOptions.ClassifierRules.FirstOrDefault(thing => thing.RuleName == ruleName);
+
+                if (configClassifierRule == null)
                 {
-                    foreach (string ruleName in MyOptions.DomainUsersWordlistRules)
+                    Mq.Error("DomainUsersWordlistRules references rule '" + ruleName +
+                             "' but no such rule exists. Check your config or TOML rules.");
+                    continue;
+                }
+
+                if (configClassifierRule.Regexes == null)
+                {
+                    configClassifierRule.Regexes = new List<Regex>();
+                }
+
+                foreach (string user in MyOptions.DomainUsersToMatch)
+                {
+                    if (user.Length < MyOptions.DomainUserMinLen)
                     {
-                        ClassifierRule configClassifierRule =
-                            MyOptions.ClassifierRules.First(thing => thing.RuleName == ruleName);
-
-                        foreach (string user in MyOptions.DomainUsersToMatch)
-                        {
-                            if (user.Length < MyOptions.DomainUserMinLen)
-                            {
-                                Mq.Trace(String.Format("Skipping regex for \"{0}\".  Shorter than minimum chars: {1}", user, MyOptions.DomainUserMinLen));
-                                continue;
-                            }
-
-                            // Use the null character to match begin and end of line
-                            string pattern = "(| |'|\")" + Regex.Escape(user) + "(| |'|\")";
-                            Regex regex = new Regex(pattern,
-                                RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.CultureInvariant);
-                            configClassifierRule.Regexes.Add(regex);
-                            Mq.Trace(String.Format("Adding regex {0} to rule {1}", regex, ruleName));
-                        }
-
+                        Mq.Trace(String.Format("Skipping regex for \"{0}\".  Shorter than minimum chars: {1}", user, MyOptions.DomainUserMinLen));
+                        continue;
                     }
+
+                    // Use the null character to match begin and end of line
+                    string pattern = "(| |'|\")" + Regex.Escape(user) + "(| |'|\")";
+                    Regex regex = new Regex(pattern,
+                        RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.CultureInvariant,
+                        TimeSpan.FromSeconds(5));
+                    configClassifierRule.Regexes.Add(regex);
+                    Mq.Trace(String.Format("Adding regex {0} to rule {1}", regex, ruleName));
                 }
             }
-            catch (Exception)
-            {
-                Mq.Error("Something went wrong adding domain users to rules.");
-            }
+
+            Mq.Info("Added " + MyOptions.DomainUsersToMatch.Count + " domain user patterns to rules.");
         }
 
         private void ShareDiscovery(string[] computerTargets)
@@ -290,6 +318,11 @@ namespace SnaffCore
             Mq.Info("Starting to look for readable shares...");
             foreach (string computer in computerTargets)
             {
+                if (_cancellationToken.IsCancellationRequested)
+                {
+                    Mq.Info("Cancellation requested, stopping share discovery.");
+                    break;
+                }
                 if (CheckExclusions(computer))
                 {
                     // skip any that are in the exclusion list
@@ -302,9 +335,16 @@ namespace SnaffCore
                     try
                     {
                         Mq.Trace("Performing reverse lookup for " + computer);
-                        IPHostEntry result = Dns.GetHostEntry(computer);
+                        IPHostEntry result = TimeoutHelper.RunWithTimeout(
+                            () => Dns.GetHostEntry(computer),
+                            MyOptions.DnsTimeoutSeconds * 1000);
                         computerName = result.HostName;
                         Mq.Trace("Got DNSName " + computerName + " for " + computer);
+                    }
+                    catch (TimeoutException)
+                    {
+                        Mq.Degub("DNS reverse lookup timed out for " + computer);
+                        computerName = computer;
                     }
                     catch (Exception e)
                     {
@@ -356,11 +396,13 @@ namespace SnaffCore
                     return true;
                 }
             }
-            else { 
+            else {
                 try
                 {
                     // resolve it
-                    IPHostEntry result = Dns.GetHostEntry(computer);
+                    IPHostEntry result = TimeoutHelper.RunWithTimeout(
+                        () => Dns.GetHostEntry(computer),
+                        MyOptions.DnsTimeoutSeconds * 1000);
                     // handle multiple IPs in response
                     foreach (IPAddress ipAddress in result.AddressList)
                     {
@@ -373,6 +415,11 @@ namespace SnaffCore
                             return true;
                         };
                     }
+                }
+                catch (TimeoutException)
+                {
+                    Mq.Degub("DNS resolution timed out for " + computer + ", excluding as safety measure");
+                    return true;
                 }
                 catch (Exception ex)
                 {
@@ -392,6 +439,11 @@ namespace SnaffCore
         {
             foreach (string pathTarget in pathTargets)
             {
+                if (_cancellationToken.IsCancellationRequested)
+                {
+                    Mq.Info("Cancellation requested, stopping file discovery.");
+                    break;
+                }
                 // TreeWalker Task Creation - this kicks off the rest of the flow
                 Mq.Info("Creating a TreeWalker task for " + pathTarget);
                 TreeTaskScheduler.New(() =>

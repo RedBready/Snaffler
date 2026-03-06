@@ -33,6 +33,8 @@ namespace SnaffCore.Config
         public string RuleDir { get; set; }
 
         public int TimeOut { get; set; } = 5;
+        public int SmbTimeoutSeconds { get; set; } = 60;
+        public int DnsTimeoutSeconds { get; set; } = 5;
 
         // Concurrency Options
         public int MaxThreads { get; set; } = 60;
@@ -109,7 +111,7 @@ namespace SnaffCore.Config
             "configmgr"
         };
 
-        public List<string> DomainUserStrictStrings { get; set; } 
+        public List<string> DomainUserStrictStrings { get; set; } = new List<string>();
 
         public List<string> DomainUsersWordlistRules { get; set; } = new List<string>()
         {

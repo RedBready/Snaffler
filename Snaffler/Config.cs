@@ -106,7 +106,11 @@ namespace Snaffler
             ValueArgument<string> logType = new ValueArgument<string>('t', "logtype", "Type of log you would like to output. Currently supported options are plain and JSON. Defaults to plain.");
             ValueArgument<string> timeOutArg = new ValueArgument<string>('e', "timeout",
                 "Interval between status updates (in minutes) also acts as a timeout for AD data to be gathered via LDAP. Turn this knob up if you aren't getting any computers from AD when you run Snaffler through a proxy or other slow link. Default = 5");
-            // list of letters i haven't used yet: gnqw
+            ValueArgument<int> smbTimeoutArg = new ValueArgument<int>('w', "smbtimeout",
+                "Timeout in seconds for individual SMB operations (Directory.GetFiles, etc). Default = 60");
+            ValueArgument<int> dnsTimeoutArg = new ValueArgument<int>('g', "dnstimeout",
+                "Timeout in seconds for DNS resolution operations. Default = 5");
+            // list of letters i haven't used yet: nq
 
             CommandLineParser.CommandLineParser parser = new CommandLineParser.CommandLineParser();
             parser.Arguments.Add(timeOutArg);
@@ -132,6 +136,8 @@ namespace Snaffler
             parser.Arguments.Add(ruleDirArg);
             parser.Arguments.Add(logType);
             parser.Arguments.Add(compExclusionArg);
+            parser.Arguments.Add(smbTimeoutArg);
+            parser.Arguments.Add(dnsTimeoutArg);
 
             // extra check to handle builtin behaviour from cmd line arg parser
             if ((args.Contains("--help") || args.Contains("/?") || args.Contains("help") || args.Contains("-h") || args.Length == 0))
@@ -162,6 +168,18 @@ namespace Snaffler
                     {
                         Mq.Error("Invalid timeout value passed, defaulting to 5 mins.");
                     }
+                }
+
+                if (smbTimeoutArg.Parsed)
+                {
+                    parsedConfig.SmbTimeoutSeconds = smbTimeoutArg.Value;
+                    Mq.Info("Set SMB operation timeout to " + smbTimeoutArg.Value + " seconds.");
+                }
+
+                if (dnsTimeoutArg.Parsed)
+                {
+                    parsedConfig.DnsTimeoutSeconds = dnsTimeoutArg.Value;
+                    Mq.Info("Set DNS timeout to " + dnsTimeoutArg.Value + " seconds.");
                 }
 
                 if (logType.Parsed && !String.IsNullOrWhiteSpace(logType.Value))
@@ -212,11 +230,18 @@ namespace Snaffler
                         {
                             try
                             {
-                                IPHostEntry result = Dns.GetHostEntry(line);
+                                IPHostEntry result = TimeoutHelper.RunWithTimeout(
+                                    () => Dns.GetHostEntry(line),
+                                    parsedConfig.DnsTimeoutSeconds * 1000);
                                 foreach (IPAddress ipAddress in result.AddressList)
                                 {
                                     compExclusions.Add(ipAddress.ToString());
                                 }
+                            }
+                            catch (TimeoutException)
+                            {
+                                Console.WriteLine("DNS resolution timed out for exclusion entry: " + line);
+                                continue;
                             }
                             catch (Exception ex)
                             {

@@ -198,10 +198,17 @@ namespace Snaffler
                     Directory.CreateDirectory(Options.SnafflePath);
                 }
 
-                controller = new SnaffCon(Options);
-
                 var tokenSource = new CancellationTokenSource();
                 var token = tokenSource.Token;
+
+                controller = new SnaffCon(Options, token);
+
+                Console.CancelKeyPress += (sender, e) =>
+                {
+                    e.Cancel = true; // Prevent immediate process termination
+                    Mq.Info("Ctrl+C pressed - initiating graceful shutdown...");
+                    tokenSource.Cancel();
+                };
 
                 WindowsIdentity impersonatedUser = WindowsIdentity.GetCurrent();
                 Task thing = Task.Factory.StartNew(() => {
