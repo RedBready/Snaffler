@@ -14,6 +14,7 @@ namespace SnaffCore.Classifiers
     public class ContentClassifier
     {
         private ClassifierRule ClassifierRule { get; set; }
+        private int SmbTimeoutMs { get { return MyOptions.SmbTimeoutSeconds * 1000; } }
 
         public ContentClassifier(ClassifierRule inRule)
         {
@@ -32,7 +33,7 @@ namespace SnaffCore.Classifiers
                     switch (ClassifierRule.MatchLocation)
                     {
                         case MatchLoc.FileContentAsBytes:
-                            byte[] fileBytes = File.ReadAllBytes(fileInfo.FullName);
+                            byte[] fileBytes = TimeoutHelper.RunWithTimeout(() => File.ReadAllBytes(fileInfo.FullName), SmbTimeoutMs);
                             if (ByteMatch(fileBytes))
                             {
                                 fileResult = new FileResult(fileInfo, altFileInfo)
@@ -65,7 +66,7 @@ namespace SnaffCore.Classifiers
                                     fileString = File.ReadAllText(fileInfo.FullName);
                                 }
 #else
-                                fileString = File.ReadAllText(fileInfo.FullName);
+                                fileString = TimeoutHelper.RunWithTimeout(() => File.ReadAllText(fileInfo.FullName), SmbTimeoutMs);
 #endif
                                 TextClassifier textClassifier = new TextClassifier(ClassifierRule);
                                 TextResult textResult = textClassifier.TextMatch(fileString);
@@ -133,6 +134,11 @@ namespace SnaffCore.Classifiers
                     Mq.Trace("The following file was bigger than the MaxSizeToGrep config parameter:" + fileInfo.FullName);
                 }
             }
+            catch (TimeoutException)
+            {
+                Mq.Trace("Timed out reading file content: " + fileInfo.FullName);
+                return;
+            }
             catch (UnauthorizedAccessException)
             {
                 Mq.Error($"Not authorized to access file: {fileInfo.FullName}");
@@ -171,13 +177,16 @@ namespace SnaffCore.Classifiers
 
         protected string GetMD5HashFromFile(string fileName)
         {
-            using (var md5 = MD5.Create())
+            return TimeoutHelper.RunWithTimeout(() =>
             {
-                using (var stream = File.OpenRead(fileName))
+                using (var md5 = MD5.Create())
                 {
-                    return BitConverter.ToString(md5.ComputeHash(stream)).Replace("-", string.Empty);
+                    using (var stream = File.OpenRead(fileName))
+                    {
+                        return BitConverter.ToString(md5.ComputeHash(stream)).Replace("-", string.Empty);
+                    }
                 }
-            }
+            }, SmbTimeoutMs);
         }
 
 #if ULTRASNAFFLER

@@ -238,7 +238,7 @@ namespace SnaffCore.TreeWalk
                             }
 
                             // Check if it points to real file
-                            string fileString = File.ReadAllText(fileInfo.FullName);
+                            string fileString = TimeoutHelper.RunWithTimeout(() => File.ReadAllText(fileInfo.FullName), SmbTimeoutMs);
                             if(!(fileString.StartsWith(@"[File]"))){
                                 Mq.Trace("Skipping file in DataLib but does not points to any file: " + fileInfo.FullName);
                                 return;

@@ -1,6 +1,7 @@
 ﻿using System;
 using System.IO;
 using SnaffCore.Classifiers.EffectiveAccess;
+using SnaffCore.Concurrency;
 using static SnaffCore.Config.Options;
 
 namespace SnaffCore.Classifiers
@@ -22,10 +23,13 @@ namespace SnaffCore.Classifiers
             //this.RwStatus = effPerms.CanRw(fileInfo);
             try
             {
-                File.OpenRead(fileInfo.FullName);
+                TimeoutHelper.RunWithTimeout(() =>
+                {
+                    using (var stream = File.OpenRead(fileInfo.FullName)) { }
+                }, MyOptions.SmbTimeoutSeconds * 1000);
                 this.RwStatus = new RwStatus() { CanRead = true, CanModify = false, CanWrite = false };
             }
-            catch (Exception e)
+            catch (Exception)
             {
                 this.RwStatus = new RwStatus() { CanModify = false, CanRead = false, CanWrite = false };
             }
@@ -63,7 +67,7 @@ namespace SnaffCore.Classifiers
             
             string snaffleDirPath = Path.GetDirectoryName(snaffleFilePath);
             Directory.CreateDirectory(snaffleDirPath);
-            File.Copy(sourcePath, (Path.Combine(snafflePath, cleanedPath)), true);
+            TimeoutHelper.RunWithTimeout(() => File.Copy(sourcePath, (Path.Combine(snafflePath, cleanedPath)), true), MyOptions.SmbTimeoutSeconds * 1000);
         }
 
         /*

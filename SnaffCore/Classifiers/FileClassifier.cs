@@ -319,7 +319,7 @@ namespace SnaffCore.Classifiers
             var localTempCopy = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
             try
             {
-                File.Copy(fileInfo.FullName, localTempCopy);
+                TimeoutHelper.RunWithTimeout(() => File.Copy(fileInfo.FullName, localTempCopy), MyOptions.SmbTimeoutSeconds * 1000);
             }
             catch (Exception e)
             {
