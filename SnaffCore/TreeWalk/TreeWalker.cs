@@ -51,6 +51,11 @@ namespace SnaffCore.TreeWalk
                 string currentDirectoryName = currentDirInfo.Name; // Remove paths, keep dirname only
                 if (currentDirectoryName == @"SCCMContentLib" || currentDirectoryName == @"SCCMContentLib$")
                 {
+                    if (!MyOptions.ScanSccm)
+                    {
+                        Mq.Info("SCCM content library found but skipped (use -S to scan): " + currentDir);
+                        return;
+                    }
                     Mq.Info("SCCM content library found: " + currentDir);
                     string dataLibDir = Path.Combine(currentDir, "DataLib"); // As full path
                     try
@@ -219,124 +224,97 @@ namespace SnaffCore.TreeWalk
             try
             {
                 string[] files = TimeoutHelper.RunWithTimeout(() => Directory.GetFiles(currentDir), SmbTimeoutMs);
-                // check if we actually like the files
+                // Process INI files inline on TreeWalker thread to avoid nested
+                // FileTaskScheduler deadlock. Only the final ScanFile is queued to FileScanner.
                 foreach (string file in files)
                 {
-                    FileTaskScheduler.New(() =>
+                    try
                     {
-                        try
+                        FileInfo fileInfo = new FileInfo(file);
+
+                        // Check if INI
+                        if (fileInfo.Extension != ".INI")
                         {
-                            //FileScanner.ScanFile(file);
-
-                            FileInfo fileInfo = new FileInfo(file);
-
-                            // Check if INI
-                            if (fileInfo.Extension != ".INI")
-                            {
-                                Mq.Trace("Skipping file in DataLib but does not extention .INI; Something wrong: " + fileInfo.FullName);
-                                return;
-                            }
-
-                            // Check if it points to real file
-                            string fileString = TimeoutHelper.RunWithTimeout(() => File.ReadAllText(fileInfo.FullName), SmbTimeoutMs);
-                            if(!(fileString.StartsWith(@"[File]"))){
-                                Mq.Trace("Skipping file in DataLib but does not points to any file: " + fileInfo.FullName);
-                                return;
-                            }
-
-                            // Obtain hash
-                            string pattern = @"Hash=([0-9A-Fa-f]+)";
-                            string hashValueText;
-                            if (Regex.IsMatch(fileString, pattern))
-                            {
-                                hashValueText = Regex.Match(fileString, pattern).Groups[1].Value;
-                            }
-                            else
-                            {
-                                Mq.Trace("Skipping file in DataLib but does not have hash of any file: " + fileInfo.FullName);
-                                return;
-                            }
-
-                            string targetDirName = hashValueText.Substring(0, 4);
-
-                            // strip off .INI to get actual name
-                            //string targetFileName = fileInfo.FullName.Replace(".INI", "");
-                            string tmpFullFileName = fileInfo.FullName;
-                            string alternativeFullFileName = tmpFullFileName.Substring(0, (tmpFullFileName.Length - 4)); // Remove ".INI";
-                            AlternativeFileInfo altFileInfo = new AlternativeFileInfo(alternativeFullFileName);
-
-                            // Calculate real path
-                            string targetFilePathName = Path.Combine(sccmBaseDir, @"FileLib", targetDirName, hashValueText);
-                            FileInfo contentFileInfo = new FileInfo(targetFilePathName);
-
-                            Mq.Trace("We can look at file [" + contentFileInfo.FullName + " ] reffered by [ " + fileInfo.FullName + " ] should be handled as [ " + alternativeFullFileName + " ]");
-
-                            /*
-                            // for Debug
-                            if (!(contentFileInfo.Exists))
-                            {
-                                Mq.Error("File not exist: " + contentFileInfo.FullName);
-                            }
-                            */
-
-                            FileTaskScheduler.New(() =>
-                            {
-                                try
-                                {
-                                    FileScanner.ScanFile(targetFilePathName, altFileInfo);
-                                }
-                                catch (Exception e)
-                                {
-                                    Mq.Error("Exception in FileScanner task for file " + file);
-                                    Mq.Trace(e.ToString());
-                                }
-                            });
-
-
-                            return;
-
-
-
+                            Mq.Trace("Skipping non-INI in DataLib: " + fileInfo.FullName);
+                            continue;
                         }
-                        catch (FileNotFoundException e)
+
+                        // Check if it points to real file
+                        string fileString = TimeoutHelper.RunWithTimeout(() => File.ReadAllText(fileInfo.FullName), SmbTimeoutMs);
+                        if (!fileString.StartsWith(@"[File]"))
                         {
-                            // If file was deleted by a separate application
-                            //  or thread since the call to TraverseTree()
-                            // then just continue.
-                            Mq.Trace(e.ToString());
-                            return;
+                            Mq.Trace("Skipping non-file-pointer INI in DataLib: " + fileInfo.FullName);
+                            continue;
                         }
-                        catch (UnauthorizedAccessException e)
+
+                        // Obtain hash
+                        string pattern = @"Hash=([0-9A-Fa-f]+)";
+                        if (!Regex.IsMatch(fileString, pattern))
                         {
-                            Mq.Trace(e.ToString());
-                            return;
+                            Mq.Trace("No hash in DataLib INI: " + fileInfo.FullName);
+                            continue;
                         }
-                        catch (PathTooLongException)
+                        string hashValueText = Regex.Match(fileString, pattern).Groups[1].Value;
+                        string targetDirName = hashValueText.Substring(0, 4);
+
+                        // strip off .INI to get actual name
+                        string alternativeFullFileName = fileInfo.FullName.Substring(0, (fileInfo.FullName.Length - 4)); // Remove ".INI"
+                        AlternativeFileInfo altFileInfo = new AlternativeFileInfo(alternativeFullFileName);
+
+                        // Calculate real path
+                        string targetFilePathName = Path.Combine(sccmBaseDir, @"FileLib", targetDirName, hashValueText);
+
+                        Mq.Trace("SCCM: [" + targetFilePathName + "] via [" + fileInfo.FullName + "] as [" + alternativeFullFileName + "]");
+
+                        // Queue only the final scan to FileScanner — no nesting
+                        string tfpn = targetFilePathName;
+                        AlternativeFileInfo afi = altFileInfo;
+                        FileTaskScheduler.New(() =>
                         {
-                            Mq.Trace(file + " path was too long for me to look at.");
-                            return;
-                        }
-                        catch (Exception e)
-                        {
-                            Mq.Trace(e.ToString());
-                        }
-                    });
+                            try
+                            {
+                                FileScanner.ScanFile(tfpn, afi);
+                            }
+                            catch (Exception e)
+                            {
+                                Mq.Error("Exception in FileScanner task for SCCM file " + tfpn);
+                                Mq.Trace(e.ToString());
+                            }
+                        });
+                    }
+                    catch (TimeoutException)
+                    {
+                        Mq.Trace("Timed out reading SCCM INI: " + file);
+                    }
+                    catch (FileNotFoundException e)
+                    {
+                        Mq.Trace(e.ToString());
+                    }
+                    catch (UnauthorizedAccessException e)
+                    {
+                        Mq.Trace(e.ToString());
+                    }
+                    catch (PathTooLongException)
+                    {
+                        Mq.Trace(file + " path was too long for me to look at.");
+                    }
+                    catch (Exception e)
+                    {
+                        Mq.Trace(e.ToString());
+                    }
                 }
             }
             catch (UnauthorizedAccessException)
             {
                 //Mq.Trace(e.ToString());
-                //continue;
             }
             catch (DirectoryNotFoundException)
             {
                 //Mq.Trace(e.ToString());
-                //continue;
             }
             catch (IOException)
             {
                 //Mq.Trace(e.ToString());
-                //continue;
             }
             catch (TimeoutException)
             {
@@ -345,7 +323,6 @@ namespace SnaffCore.TreeWalk
             catch (Exception e)
             {
                 Mq.Degub(e.ToString());
-                //continue;
             }
 
             try

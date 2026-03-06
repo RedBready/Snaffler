@@ -44,6 +44,11 @@ namespace Snaffler
             hostString();
             // print the thing
             PrintBanner();
+            // Ensure the ThreadPool can handle concurrent SMB operations without slow growth.
+            // TimeoutHelper dispatches work to the ThreadPool, and the task schedulers also run
+            // on it. Without this, the pool starts at ProcessorCount threads and grows by 1 per
+            // 500ms under contention, causing timeouts when many operations queue simultaneously.
+            ThreadPool.SetMinThreads(200, 200);
             // set up the message queue for operation
             BlockingMq.MakeMq();
             // get a handle to the message queue singleton
@@ -197,6 +202,16 @@ namespace Snaffler
                 {
                     Directory.CreateDirectory(Options.SnafflePath);
                 }
+
+                // Initialize progress tracking
+                string progressFile = Path.Combine(Directory.GetCurrentDirectory(),
+                    "snif" + DateTime.Now.ToString("yyyyMMddTHHmmss") + ".snif");
+                SnaffCore.Concurrency.ScanProgressTracker.Initialize(progressFile, Options.ResumeFilePath);
+                if (!string.IsNullOrEmpty(Options.ResumeFilePath))
+                {
+                    Mq.Info("Resuming from: " + Options.ResumeFilePath);
+                }
+                Mq.Info("Progress file: " + progressFile);
 
                 var tokenSource = new CancellationTokenSource();
                 var token = tokenSource.Token;

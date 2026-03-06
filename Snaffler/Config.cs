@@ -110,7 +110,10 @@ namespace Snaffler
                 "Timeout in seconds for individual SMB operations (Directory.GetFiles, etc). Default = 60");
             ValueArgument<int> dnsTimeoutArg = new ValueArgument<int>('g', "dnstimeout",
                 "Timeout in seconds for DNS resolution operations. Default = 5");
-            // list of letters i haven't used yet: nq
+            ValueArgument<string> resumeArg = new ValueArgument<string>('q', "resume",
+                "Resume from a previous progress file (snif*.snif). Skips already-completed shares.");
+            SwitchArgument scanSccmArg = new SwitchArgument('S', "scansccm",
+                "Enables scanning SCCM content libraries (SCCMContentLib/SCCMContentLib$). Disabled by default as these can be massive and slow down scans significantly.", false);
 
             CommandLineParser.CommandLineParser parser = new CommandLineParser.CommandLineParser();
             parser.Arguments.Add(timeOutArg);
@@ -138,6 +141,8 @@ namespace Snaffler
             parser.Arguments.Add(compExclusionArg);
             parser.Arguments.Add(smbTimeoutArg);
             parser.Arguments.Add(dnsTimeoutArg);
+            parser.Arguments.Add(resumeArg);
+            parser.Arguments.Add(scanSccmArg);
 
             // extra check to handle builtin behaviour from cmd line arg parser
             if ((args.Contains("--help") || args.Contains("/?") || args.Contains("help") || args.Contains("-h") || args.Length == 0))
@@ -182,6 +187,12 @@ namespace Snaffler
                     Mq.Info("Set DNS timeout to " + dnsTimeoutArg.Value + " seconds.");
                 }
 
+                if (resumeArg.Parsed && !String.IsNullOrWhiteSpace(resumeArg.Value))
+                {
+                    parsedConfig.ResumeFilePath = resumeArg.Value;
+                    Mq.Info("Will resume from progress file: " + resumeArg.Value);
+                }
+
                 if (logType.Parsed && !String.IsNullOrWhiteSpace(logType.Value))
                 {
                     //Set the default to plain
@@ -208,7 +219,7 @@ namespace Snaffler
                 if (outFileArg.Parsed && (!String.IsNullOrEmpty(outFileArg.Value)))
                 {
                     parsedConfig.LogToFile = true;
-                    parsedConfig.LogFilePath = outFileArg.Value;
+                    parsedConfig.LogFilePath = Path.GetFullPath(outFileArg.Value);
                     Mq.Degub("Logging to file at " + parsedConfig.LogFilePath);
                 }
 
@@ -282,6 +293,11 @@ namespace Snaffler
                 if (findSharesOnlyArg.Parsed)
                 {
                     parsedConfig.ScanFoundShares = false;
+                }
+                if (scanSccmArg.Parsed)
+                {
+                    parsedConfig.ScanSccm = true;
+                    Mq.Info("SCCM content library scanning enabled.");
                 }
                 if (maxThreadsArg.Parsed)
                 {

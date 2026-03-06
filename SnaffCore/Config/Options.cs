@@ -23,6 +23,7 @@ namespace SnaffCore.Config
         public bool ScanSysvol { get; set; } = true;
         public bool ScanNetlogon { get; set; } = true;
         public bool ScanFoundShares { get; set; } = true;
+        public bool ScanSccm { get; set; } = false;
         public int InterestLevel { get; set; } = 0;
         public bool DfsOnly { get; set; } = false;
         public bool DfsShareDiscovery { get; set; } = false;
@@ -35,6 +36,7 @@ namespace SnaffCore.Config
         public int TimeOut { get; set; } = 5;
         public int SmbTimeoutSeconds { get; set; } = 60;
         public int DnsTimeoutSeconds { get; set; } = 5;
+        public string ResumeFilePath { get; set; }
 
         // Concurrency Options
         public int MaxThreads { get; set; } = 60;

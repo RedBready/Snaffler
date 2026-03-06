@@ -173,6 +173,7 @@ namespace SnaffCore
             }
 
             StatusUpdate();
+            ScanProgressTracker.GetInstance()?.RecordCompleted();
             DateTime finished = DateTime.Now;
             TimeSpan runSpan = finished.Subtract(StartTime);
             Mq.Info("Finished at " + finished.ToLocalTime());
@@ -311,6 +312,35 @@ namespace SnaffCore
 
         private void ShareDiscovery(string[] computerTargets)
         {
+            var tracker = ScanProgressTracker.GetInstance();
+
+            // Resume: re-queue shares that were discovered but not fully walked
+            if (tracker != null)
+            {
+                List<string> pendingShares = tracker.GetPendingShares();
+                if (pendingShares.Count > 0)
+                {
+                    Mq.Info("Resume: re-queuing " + pendingShares.Count + " incomplete shares from previous run.");
+                    foreach (string sharePath in pendingShares)
+                    {
+                        string sp = sharePath;
+                        TreeTaskScheduler.New(() =>
+                        {
+                            try
+                            {
+                                TreeWalker.WalkTree(sp);
+                                tracker.RecordShareDone(sp);
+                            }
+                            catch (Exception e)
+                            {
+                                Mq.Error("Exception in resumed TreeWalker for " + sp);
+                                Mq.Error(e.ToString());
+                            }
+                        });
+                    }
+                }
+            }
+
             Mq.Info("Starting to look for readable shares...");
             foreach (string computer in computerTargets)
             {
@@ -354,6 +384,14 @@ namespace SnaffCore
                     // Use the provided computer name if it's not an IP address
                     computerName = computer;
                 }
+
+                // Resume: skip computers whose shares were already enumerated
+                if (tracker != null && tracker.IsComputerEnumerated(computerName))
+                {
+                    Mq.Info("Resume: skipping already-enumerated computer " + computerName);
+                    continue;
+                }
+
                 // ShareFinder Task Creation - this kicks off the rest of the flow
                 Mq.Trace("Creating a ShareFinder task for " + computerName);
                 ShareTaskScheduler.New(() =>
@@ -433,6 +471,8 @@ namespace SnaffCore
 
         private void FileDiscovery(string[] pathTargets)
         {
+            var tracker = ScanProgressTracker.GetInstance();
+
             foreach (string pathTarget in pathTargets)
             {
                 if (_cancellationToken.IsCancellationRequested)
@@ -440,17 +480,27 @@ namespace SnaffCore
                     Mq.Info("Cancellation requested, stopping file discovery.");
                     break;
                 }
+
+                // Resume: skip already-completed paths
+                if (tracker != null && tracker.IsPathDone(pathTarget))
+                {
+                    Mq.Info("Resume: skipping already-completed path " + pathTarget);
+                    continue;
+                }
+
                 // TreeWalker Task Creation - this kicks off the rest of the flow
                 Mq.Info("Creating a TreeWalker task for " + pathTarget);
+                string pt = pathTarget;
                 TreeTaskScheduler.New(() =>
                 {
                     try
                     {
-                        TreeWalker.WalkTree(pathTarget);
+                        TreeWalker.WalkTree(pt);
+                        tracker?.RecordPathDone(pt);
                     }
                     catch (Exception e)
                     {
-                        Mq.Error("Exception in TreeWalker task for path " + pathTarget);
+                        Mq.Error("Exception in TreeWalker task for path " + pt);
                         Mq.Error(e.ToString());
                     }
                 });

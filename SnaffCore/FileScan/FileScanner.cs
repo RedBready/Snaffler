@@ -19,6 +19,26 @@ namespace SnaffCore.FileScan
             try
             {
                 FileInfo fileInfo = new FileInfo(file);
+
+                // Force-cache file metadata with a timeout.
+                // FileInfo.Length triggers an SMB stat call on first access which can hang
+                // indefinitely if the target server is unresponsive. Once accessed, the value
+                // is cached internally for all subsequent property reads.
+                try
+                {
+                    long _ = TimeoutHelper.RunWithTimeout(() => fileInfo.Length, MyOptions.SmbTimeoutSeconds * 1000);
+                }
+                catch (TimeoutException)
+                {
+                    Mq.Trace("Timed out getting file info for: " + file);
+                    return;
+                }
+                catch (Exception)
+                {
+                    // File may have been deleted or become inaccessible
+                    return;
+                }
+
                 // send the file to all the classifiers.
 
                 foreach (ClassifierRule classifier in MyOptions.FileClassifiers)

@@ -78,6 +78,7 @@
     <Compile Include="ActiveDirectory\AdData.cs" />
     <Compile Include="Concurrency\BlockingMq.cs" />
     <Compile Include="Concurrency\BlockingTaskScheduler.cs" />
+    <Compile Include="Concurrency\ScanProgressTracker.cs" />
     <Compile Include="Concurrency\TimeoutHelper.cs" />
     <Compile Include="Concurrency\SnafflerMessage.cs" />
     <Compile Include="Concurrency\SnafflerMessageType.cs" />

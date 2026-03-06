@@ -36,6 +36,9 @@ namespace SnaffCore.ShareFind
 
         internal void GetComputerShares(string computer)
         {
+            var tracker = ScanProgressTracker.GetInstance();
+            List<string> queuedShares = new List<string>();
+
             // find the shares
             HostShareInfo[] hostShareInfos;
             try
@@ -63,9 +66,17 @@ namespace SnaffCore.ShareFind
                 {
                     bool matched = false;
 
-                    // SYSVOL and NETLOGON shares are replicated so they have special logic - do not use Classifiers for these
+                    // SYSVOL, NETLOGON, and SCCM shares have special logic - do not use Classifiers for these
                     switch (hostShareInfo.shi1_netname.ToUpper())
-                    {    
+                    {
+                        case "SCCMCONTENTLIB$":
+                        case "SCCMCONTENTLIB":
+                            if (!MyOptions.ScanSccm)
+                            {
+                                Mq.Info("SCCM content library share found but skipped (use -S to scan): " + shareName);
+                                matched = true;
+                            }
+                            break;
                         case "SYSVOL":
                             if (MyOptions.ScanSysvol && Interlocked.CompareExchange(ref _sysvolScanned, 1, 0) == 0)
                             {
@@ -195,16 +206,20 @@ namespace SnaffCore.ShareFind
 
                             if (MyOptions.ScanFoundShares)
                             {
-                                Mq.Trace("Creating a TreeWalker task for " + shareResult.SharePath);
+                                string sharePathForTracking = shareResult.SharePath;
+                                queuedShares.Add(sharePathForTracking);
+
+                                Mq.Trace("Creating a TreeWalker task for " + sharePathForTracking);
                                 TreeTaskScheduler.New(() =>
                                 {
                                     try
                                     {
-                                        TreeWalker.WalkTree(shareResult.SharePath);
+                                        TreeWalker.WalkTree(sharePathForTracking);
+                                        tracker?.RecordShareDone(sharePathForTracking);
                                     }
                                     catch (Exception e)
                                     {
-                                        Mq.Error("Exception in TreeWalker task for share " + shareResult.SharePath);
+                                        Mq.Error("Exception in TreeWalker task for share " + sharePathForTracking);
                                         Mq.Error(e.ToString());
                                     }
                                 });
@@ -218,6 +233,9 @@ namespace SnaffCore.ShareFind
                     }
                 }
             }
+
+            // Record that this computer's shares have been enumerated
+            tracker?.RecordComputerEnumerated(computer, queuedShares);
         }
 
         internal bool IsShareReadable(string share)
