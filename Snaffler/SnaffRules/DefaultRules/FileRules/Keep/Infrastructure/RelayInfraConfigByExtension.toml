@@ -3,7 +3,8 @@ EnumerationScope = "FileEnumeration"
 RuleName = "RelayInfraConfigByExtension"
 MatchAction = "Relay"
 RelayTargets = [
-"KeepNetConfigCreds"
+"KeepNetConfigCreds",
+"KeepPassOrKeyInCode"
 ]
 Description = "Files with these extensions will be subjected to a generic search for keys and such."
 MatchLocation = "FileExtension"

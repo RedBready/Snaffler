@@ -15,6 +15,12 @@ WordList = ["passw?o?r?d\\s*=\\s*[\\'\\\"][^\\'\\\"]....",
 "[_\\-\\.]oauth\\s*=\\s*[\\'\\\"][^\\'\\\"]....",
 "client_secret\\s*=*\\s*",
 "<ExtendedMatchKey>ClientAuth",
-"GIUserPassword"
+"GIUserPassword",
+"[Aa][Dd][Pp]ass(?:word)?\\s*=\\s*[\\'\\\"][^\\'\\\"]....",
+"[Aa][Dd][Uu]ser(?:name)?\\s*=\\s*[\\'\\\"][^\\'\\\"]....",
+"[Dd]omain[Pp]ass(?:word)?\\s*=\\s*[\\'\\\"][^\\'\\\"]....",
+"[Dd]omain[Uu]ser(?:name)?\\s*=\\s*[\\'\\\"][^\\'\\\"]....",
+"[Dd]omain[Aa]dmin\\s*=\\s*[\\'\\\"][^\\'\\\"]....",
+"[Jj]oin[Dd]omain\\s*=\\s*[\\'\\\"][^\\'\\\"]....",
 ]
 Triage = "Red"

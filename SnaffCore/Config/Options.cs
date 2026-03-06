@@ -117,7 +117,7 @@ namespace SnaffCore.Config
 
         public List<string> DomainUsersWordlistRules { get; set; } = new List<string>()
         {
-            "KeepConfigRegexRed"
+            "KeepPassOrKeyInCode"
         };
 
         // this sets the maximum size of file to look inside.
