@@ -7,6 +7,7 @@ using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 using SnaffCore.ActiveDirectory;
 using SnaffCore.Classifiers.EffectiveAccess;
 using static SnaffCore.Config.Options;
@@ -16,6 +17,9 @@ namespace SnaffCore.ShareFind
 {
     public class ShareFinder
     {
+        private static int _sysvolScanned = 0;
+        private static int _netlogonScanned = 0;
+
         private BlockingMq Mq { get; set; }
         private BlockingStaticTaskScheduler TreeTaskScheduler { get; set; }
         private TreeWalker TreeWalker { get; set; }
@@ -63,20 +67,17 @@ namespace SnaffCore.ShareFind
                     switch (hostShareInfo.shi1_netname.ToUpper())
                     {    
                         case "SYSVOL":
-                            if (MyOptions.ScanSysvol == true)
+                            if (MyOptions.ScanSysvol && Interlocked.CompareExchange(ref _sysvolScanned, 1, 0) == 0)
                             {
                                 //  Leave matched as false so that we don't suppress the TreeWalk for the first SYSVOL replica we see.
-                                //  Toggle the flag so that any other shares replica will be skipped
-                                MyOptions.ScanSysvol = false;
                                 break;
                             }
                             matched = true;
                             break;
                         case "NETLOGON":
-                            if (MyOptions.ScanNetlogon == true)
-                            {                                
+                            if (MyOptions.ScanNetlogon && Interlocked.CompareExchange(ref _netlogonScanned, 1, 0) == 0)
+                            {
                                 //  Same logic as SYSVOL above
-                                MyOptions.ScanNetlogon = false;
                                 break;
                             }
                             matched = true;

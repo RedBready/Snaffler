@@ -54,8 +54,13 @@ namespace SnaffCore.Classifiers
             BlockingMq Mq = BlockingMq.GetMq();
             try
             {
-                string[] files = Directory.GetFiles(share);
+                string[] files = TimeoutHelper.RunWithTimeout(() => Directory.GetFiles(share), MyOptions.SmbTimeoutSeconds * 1000);
                 return true;
+            }
+            catch (TimeoutException)
+            {
+                Mq.Trace("Timed out checking readability of share: " + share);
+                return false;
             }
             catch (UnauthorizedAccessException)
             {

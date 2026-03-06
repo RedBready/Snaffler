@@ -190,7 +190,7 @@ namespace SnaffCore
             dfsSharesDict = _adData.GetDfsSharesDict();
 
             // if we found some actual dfsshares
-            if (dfsSharesDict.Count >= 1)
+            if (dfsSharesDict != null && dfsSharesDict.Count >= 1)
             {
                 MyOptions.DfsSharesDict = dfsSharesDict;
                 MyOptions.DfsNamespacePaths = _adData.GetDfsNamespacePaths();
@@ -234,19 +234,15 @@ namespace SnaffCore
             {
                 Mq.Error(
                     "Something fucked out finding stuff in the domain. You must be holding it wrong.");
-                while (true)
-                {
-                    Mq.Terminate();
-                }
+                Mq.Terminate();
+                return;
             }
 
             if (targetComputers.Count == 0 && MyOptions.DfsNamespacePaths.Count == 0)
             {
                 Mq.Error("Didn't find any domain computers. Seems weird. Try pouring water on it.");
-                while (true)
-                {
-                    Mq.Terminate();
-                }
+                Mq.Terminate();
+                return;
             }
 
             // call ShareDisco which should handle the rest.
